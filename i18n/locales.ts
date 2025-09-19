@@ -1,0 +1,50 @@
+export const translations = {
+  en: {
+    title: 'PlantSound AR',
+    subtitle: 'Discover the hidden world of your plants. Transform a photo into a unique soundscape and interactive experience.',
+    uploadButton: 'Tap to Scan Your Plant',
+    loadingMessages: [
+      "Awakening plant spirits...",
+      "Translating chlorophyll into chords...",
+      "Analyzing petal patterns...",
+      "Generating a unique soundscape...",
+      "Composing a symphony of leaves...",
+      "Listening to the roots...",
+      "Decoding botanical secrets...",
+    ],
+    listenButton: 'Listen to Your Plant',
+    generatingSound: 'Generating...',
+    stopSound: 'Stop Sound',
+    soundUnavailable: 'Sound Unavailable',
+    toxicWarning: 'Toxic to pets! Keep away.',
+    addReminderButton: 'Add Reminder',
+    reminderSetAlert: 'Reminder for',
+    errorTitle: 'Analysis Failed',
+    errorButton: 'Try Again',
+  },
+  es: {
+    title: 'PlantSound AR',
+    subtitle: 'Descubre el mundo oculto de tus plantas. Transforma una foto en un paisaje sonoro único y una experiencia interactiva.',
+    uploadButton: 'Toca para Escanear tu Planta',
+    loadingMessages: [
+      "Despertando espíritus de la planta...",
+      "Traduciendo clorofila en acordes...",
+      "Analizando patrones de pétalos...",
+      "Generando un paisaje sonoro único...",
+      "Componiendo una sinfonía de hojas...",
+      "Escuchando a las raíces...",
+      "Decodificando secretos botánicos...",
+    ],
+    listenButton: 'Escucha tu Planta',
+    generatingSound: 'Generando...',
+    stopSound: 'Detener Sonido',
+    soundUnavailable: 'Sonido no disponible',
+    toxicWarning: '¡Tóxico para mascotas! Mantener alejado.',
+    addReminderButton: 'Añadir Recordatorio',
+    reminderSetAlert: 'Recordatorio para',
+    errorTitle: 'El Análisis Falló',
+    errorButton: 'Intentar de Nuevo',
+  }
+};
+
+export type Translations = typeof translations;

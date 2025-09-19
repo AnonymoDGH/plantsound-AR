@@ -1,0 +1,7 @@
+{
+  "name": "PlantSound AR",
+  "description": "An application that transforms a photo of any plant into a unique AI-generated sound, an interactive 3D scene, and a gamified cultivation guide. It features dynamic color themes based on the plant's photo and AR-like features.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

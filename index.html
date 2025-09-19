@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PlantSound AR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        overscroll-behavior: none;
+        font-family: 'Inter', sans-serif;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .animate-fade-in {
+        animation: fade-in 0.8s ease-out forwards;
+      }
+      @keyframes fade-in-up {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-fade-in-up {
+          animation: fade-in-up 0.6s ease-out forwards;
+          /* Set a default to be invisible before animation starts */
+          opacity: 0;
+          animation-fill-mode: forwards;
+      }
+      @keyframes slide-in-up {
+        from { transform: translateY(100%); }
+        to { transform: translateY(0); }
+      }
+      .animate-slide-in-up {
+          animation: slide-in-up 0.8s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+      }
+      @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-15px); }
+      }
+      .animate-float {
+          animation: float 6s ease-in-out infinite;
+      }
+      @keyframes grow-in {
+        from {
+            transform: scale(0.8);
+            opacity: 0;
+        }
+        to {
+            transform: scale(1);
+            opacity: 1;
+        }
+      }
+      .animate-grow-in {
+        animation: grow-in 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "react": "https://aistudiocdn.com/react@^19.1.1",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.20.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-900 text-white">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
