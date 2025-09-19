@@ -1,14 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { 
-    GoogleGenAI,
-    type LiveMusicSession,
-    type LiveMusicServerMessage
-} from '@google/genai';
 import { PlantData, ColorPalette, Language } from '../types';
 import PlantInfo from './PlantInfo';
 import CareGuide from './CareGuide';
 import PlantModel3D from './PlantModel3D';
-import { decode, decodeAudioData } from '../utils/audioUtils';
 import { Translations } from '../i18n/locales';
 
 const ResetIcon = () => (
@@ -61,23 +55,17 @@ interface AnalysisScreenProps {
   onLangToggle: () => void;
 }
 
-// Type for a single weighted prompt for Lyria
-interface WeightedPrompt {
-  text: string;
-  weight: number;
-}
-
-
 const AnalysisScreen: React.FC<AnalysisScreenProps> = ({ plantData, colorPalette, onReset, t, lang, onLangToggle }) => {
   type PlaybackState = 'stopped' | 'loading' | 'playing';
-  const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
-  const [isMusicApiAvailable, setIsMusicApiAvailable] = useState(false);
-  const [scrollY, setScrollY] = useState(0);
   
-  const aiRef = useRef<GoogleGenAI | null>(null);
+  const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
+  const [scrollY, setScrollY] = useState(0);
+  const [wsSession, setWsSession] = useState<WebSocket | null>(null);
+  const [audioData, setAudioData] = useState<number>(0);
+  
   const audioContextRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
-  const sessionRef = useRef<LiveMusicSession | null>(null);
+  const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const nextChunkTimeRef = useRef<number>(0);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -101,145 +89,191 @@ const AnalysisScreen: React.FC<AnalysisScreenProps> = ({ plantData, colorPalette
   }, []);
 
   useEffect(() => {
-    if (!process.env.API_KEY) {
-      console.error("API_KEY environment variable not set.");
-      return;
-    }
-    aiRef.current = new GoogleGenAI({ apiKey: process.env.API_KEY, apiVersion: 'v1alpha' });
-
-    if ((aiRef.current as any)?.live?.music?.connect) {
-        setIsMusicApiAvailable(true);
-    } else {
-        console.warn("The 'ai.live.music.connect' API is not available. Real-time audio generation will be disabled.");
-    }
-
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    // Lyria docs recommend 48kHz for output.
     const context = new AudioContext({ sampleRate: 48000 });
     audioContextRef.current = context;
+
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 64;
+    analyser.smoothingTimeConstant = 0.8;
+    analyserNodeRef.current = analyser;
+    
     gainNodeRef.current = context.createGain();
+    
+    analyserNodeRef.current.connect(gainNodeRef.current);
     gainNodeRef.current.connect(context.destination);
     
     return () => {
-      if (sessionRef.current) {
-        (sessionRef.current as any).stop();
+      if (wsSession) {
+        wsSession.close();
       }
       if (audioContextRef.current?.state !== 'closed') {
          audioContextRef.current?.close();
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let animationFrameId: number;
+    const analyse = () => {
+        if (playbackState === 'playing' && analyserNodeRef.current) {
+            const bufferLength = analyserNodeRef.current.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyserNodeRef.current.getByteTimeDomainData(dataArray);
+            
+            let sumSquares = 0.0;
+            for (const amplitude of dataArray) {
+                const normalized = amplitude / 128.0 - 1.0;
+                sumSquares += normalized * normalized;
+            }
+            const rms = Math.sqrt(sumSquares / bufferLength);
+            setAudioData(Math.min(1.0, rms * 3.0));
+        } else {
+            setAudioData(prev => Math.max(0, prev * 0.95 - 0.01));
+        }
+        animationFrameId = requestAnimationFrame(analyse);
+    };
+
+    analyse();
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [playbackState]);
+
   const stopAudio = useCallback(async () => {
-    if (sessionRef.current) {
-      await (sessionRef.current as any).stop();
-      sessionRef.current = null;
+    if (wsSession) {
+      if(wsSession.readyState === WebSocket.OPEN) {
+        wsSession.send(JSON.stringify({
+          playback_control: "STOP"
+        }));
+      }
+      wsSession.close();
+      setWsSession(null);
     }
     if (audioContextRef.current?.state === 'running') {
       await audioContextRef.current.suspend();
     }
     setPlaybackState('stopped');
     nextChunkTimeRef.current = 0;
-  }, []);
+  }, [wsSession]);
 
   const handleToggleAudio = async () => {
-    if (!isMusicApiAvailable) return;
     if (playbackState === 'playing' || playbackState === 'loading') {
       await stopAudio();
       return;
     }
     
     const audioContext = audioContextRef.current;
-    if (!audioContext || !aiRef.current) return;
+    if (!audioContext) return;
 
     if (audioContext.state === 'suspended') await audioContext.resume();
     
     setPlaybackState('loading');
     nextChunkTimeRef.current = audioContext.currentTime;
 
+    if (!process.env.API_KEY) {
+      console.error("API_KEY environment variable not set.");
+      alert("Music generation is currently unavailable: API Key is missing.");
+      await stopAudio();
+      return;
+    }
+
     try {
-      const session = await (aiRef.current as any).live.music.connect({
-        model: "models/lyria-realtime-exp",
-        callbacks: {
-          onmessage: async (message: LiveMusicServerMessage) => {
-            if (playbackState === 'stopped') return;
-            if (message.serverContent?.audioChunks) {
-              setPlaybackState(current => current === 'loading' ? 'playing' : current);
-              for (const chunk of message.serverContent.audioChunks) {
-                try {
-                  const arrayBuffer = decode(chunk.data);
-                  const audioBuffer = await decodeAudioData(audioContext, arrayBuffer);
-                  const source = audioContext.createBufferSource();
-                  source.buffer = audioBuffer;
-                  source.connect(gainNodeRef.current!);
-                  
-                  const currentTime = audioContext.currentTime;
-                  const startTime = Math.max(currentTime, nextChunkTimeRef.current);
-                  source.start(startTime);
-                  nextChunkTimeRef.current = startTime + audioBuffer.duration;
-                } catch (e) {
-                  console.error("Error processing audio chunk:", e);
-                }
-              }
-            }
-          },
-          onerror: (error: Error) => {
-            console.error("Music session error:", error);
-            stopAudio();
-          },
-          onclose: () => {
-            console.log("Lyria RealTime stream closed.");
-            setPlaybackState('stopped');
-          },
-        },
-      });
-
-      sessionRef.current = session;
-
-      const prompts: WeightedPrompt[] = [];
-      const descriptionText = (plantData.poeticDescription || []).join(' ');
-      prompts.push({
-          text: `An atmospheric, humid, and crystalline sound that evokes: ${descriptionText}. Electronic, ambient.`,
-          weight: 1.0,
-      });
-
-      const factWeights = [0.5, 0.4, 0.3];
-      (plantData.funFacts || []).forEach((fact, index) => {
-          if(index < factWeights.length) {
-              prompts.push({
-                  text: `Subtle musical elements inspired by: ${fact}`,
-                  weight: factWeights[index],
-              });
+      const ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateMusic?key=${process.env.API_KEY}`);
+      
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          setup: {
+            model: "models/lyria-realtime-exp"
           }
-      });
-      
-      await session.setWeightedPrompts({ weightedPrompts: prompts });
+        }));
+      };
 
-      await session.setMusicGenerationConfig({
-        musicGenerationConfig: {
-          bpm: 80,
-          audioFormat: "pcm16",
-          sampleRateHz: 48000,
-        },
-      });
-      
-      await session.play();
+      ws.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+        
+        if (message.setupComplete) {
+          const descriptionText = (plantData.poeticDescription || []).join(' ');
+          const weightedPrompts = [
+            { text: `Atmospheric ambient electronic music inspired by: ${descriptionText}`, weight: 1.0 }
+          ];
+
+          (plantData.funFacts || []).forEach((fact, index) => {
+            if (index < 3) {
+              weightedPrompts.push({
+                text: `Musical elements from: ${fact}`,
+                weight: 0.5 - index * 0.1
+              });
+            }
+          });
+
+          ws.send(JSON.stringify({
+            client_content: {
+              weighted_prompts: weightedPrompts
+            }
+          }));
+
+          ws.send(JSON.stringify({
+            music_generation_config: {
+              bpm: 80,
+              temperature: 1.1,
+              guidance: 3.5,
+              brightness: 0.7,
+              density: 0.6
+            }
+          }));
+
+          ws.send(JSON.stringify({
+            playback_control: "PLAY"
+          }));
+        }
+
+        if (message.server_content?.audio_chunks) {
+          setPlaybackState('playing');
+          for (const chunk of message.server_content.audio_chunks) {
+            try {
+              const arrayBuffer = Uint8Array.from(atob(chunk.data), c => c.charCodeAt(0)).buffer;
+              const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+              const source = audioContext.createBufferSource();
+              source.buffer = audioBuffer;
+              source.connect(analyserNodeRef.current!);
+              
+              const currentTime = audioContext.currentTime;
+              const startTime = Math.max(currentTime, nextChunkTimeRef.current);
+              source.start(startTime);
+              nextChunkTimeRef.current = startTime + audioBuffer.duration;
+            } catch (e) {
+              console.error("Audio processing error:", e);
+            }
+          }
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        alert(t.errorTitle + ": " + t.soundUnavailable);
+        stopAudio();
+      };
+
+      ws.onclose = () => {
+        setPlaybackState('stopped');
+      };
+
+      setWsSession(ws);
 
     } catch (error) {
-      console.error("Error creating music session:", error);
+      console.error("WebSocket setup error:", error);
       await stopAudio();
     }
   };
   
   useEffect(() => {
-    // Cleanup function to stop audio when component unmounts
     return () => {
       stopAudio();
     };
   }, [stopAudio]);
 
   const renderButtonContent = () => {
-    if (!isMusicApiAvailable) return t.soundUnavailable;
     switch (playbackState) {
       case 'loading': return <><LoadingIcon /> {t.generatingSound}</>;
       case 'playing': return <><StopIcon /> {t.stopSound}</>;
@@ -262,7 +296,7 @@ const AnalysisScreen: React.FC<AnalysisScreenProps> = ({ plantData, colorPalette
       <div className="w-full max-w-7xl mx-auto md:flex md:gap-8 lg:gap-16 relative z-10">
         <div className="flex-1 flex flex-col items-center justify-center pt-16 md:pt-0 md:h-screen md:sticky md:top-0">
            <div className="w-full h-full animate-grow-in">
-             <PlantModel3D modelData={plantData.modelData} />
+             <PlantModel3D modelData={plantData.modelData} audioData={audioData} />
            </div>
         </div>
 
@@ -273,8 +307,7 @@ const AnalysisScreen: React.FC<AnalysisScreenProps> = ({ plantData, colorPalette
                     <div className="mt-8 mb-12">
                         <button
                             onClick={handleToggleAudio}
-                            disabled={playbackState === 'loading' || !isMusicApiAvailable}
-                            title={!isMusicApiAvailable ? t.soundUnavailable : ""}
+                            disabled={playbackState === 'loading'}
                             className="w-64 px-6 py-4 rounded-full font-bold text-lg shadow-lg transform transition-all duration-300 ease-in-out hover:scale-105 flex items-center justify-center gap-3 disabled:opacity-70 disabled:scale-100 mx-auto md:mx-0"
                             style={{ backgroundColor: 'var(--color-primary)', color: 'var(--color-background)' }}
                         >
